@@ -5,7 +5,8 @@ purpose:
 
 sources:
     http://www.fit.vutbr.cz/~vasicek/nic-vip/pythonmod/examples/index.html
-    http://www.fit.vutbr.cz/~vasicek/nic-vip/pythonmod/examples/example0.html
+    http://www.fit.vutbr.cz/~vasicek/nic-vip/pythonmod/examples/example0.html (Fundamentals)
+    http://www.fit.vutbr.cz/~vasicek/nic-vip/pythonmod/examples/example3.html (Response modification)
     https://github.com/NLnetLabs/unbound/tree/master/pythonmod/examples
     https://github.com/NLnetLabs/unbound/blob/master/pythonmod/doc/modules/functions.rst
     https://github.com/NLnetLabs/unbound/blob/master/pythonmod/doc/modules/struct.rst
@@ -20,11 +21,12 @@ from os.path import exists
 import subprocess
 
 domains = [
+    "api.bitwarden.com.",
     "identity.bitwarden.com.",
     "unifi.reliable.network.",
     "unifi.reliablenetwork.co.",
     "nas.reliable.network.",
-    "netflix.com.",
+    "esxi02.reliable.network.",
 ]
 
 min_ttl = 10
@@ -64,8 +66,8 @@ def setTTL(qstate, ttl):
                     d.rr_ttl[j] = ttl
 
 def operate(id, event, qstate, qdata):
-    #log_info("pythonmod: operate() id: %d, event:%s" % (id, strmodulevent(event)))
     """
+    log_info("pythonmod: operate() id: %d, event:%s" % (id, strmodulevent(event)))
     log_info("Query: %s %s %s" % (qstate.qinfo.qname, qstate.qinfo.qname_list, qstate.qinfo.qname_str))
     log_info("Type: %s (%d)" % (qstate.qinfo.qtype_str, qstate.qinfo.qtype))
     log_info("Class: %s (%d)" % (qstate.qinfo.qclass_str, qstate.qinfo.qclass))
@@ -85,7 +87,7 @@ def operate(id, event, qstate, qdata):
                 #qstate.no_cache_store = 1
                 qstate.return_rcode = RCODE_NOERROR
                 qstate.ext_state[id] = MODULE_FINISHED
-                #log_info("no-aaaa: IPv6 gateway is down, filtering AAAA response for %s" % qstate.qinfo.qname_str)
+                verbose(3, "no-aaaa: IPv6 gateway is down, filtering AAAA response for %s" % qstate.qinfo.qname_str)
                 return True
 
             #log_info("checking to see if %s matches any blocked domains" % qstate.qinfo.qname_str)
@@ -97,7 +99,7 @@ def operate(id, event, qstate, qdata):
                 qstate.return_msg.rep.security = 2
                 qstate.return_rcode = RCODE_NOERROR
                 qstate.ext_state[id] = MODULE_FINISHED
-                log_info("no-aaaa: filtering AAAA request for %s" % qstate.qinfo.qname_str)
+                verbose(2, "no-aaaa: filtering AAAA request for %s" % qstate.qinfo.qname_str)
                 return True
 
         #log_info("passing non-AAAA request: %s" % qstate.qinfo.qname_str)
@@ -106,27 +108,33 @@ def operate(id, event, qstate, qdata):
 
     if event == MODULE_EVENT_MODDONE:
         #log_info("pythonmod: iterator module done")
+
+        try:
+            assert qstate.return_msg is not None
+        except Exception as e:
+            verbose(2, 'MODDONE but qstate.return_msg==None, %s' % repr(e))
+            qstate.ext_state[id] = MODULE_FINISHED
+            return True
+
         if qstate.qinfo.qtype == RR_TYPE_AAAA:
             try:
                 invalidateQueryInCache(qstate, qstate.return_msg.qinfo)
-                #log_info('invalidated cache: %s' % qstate.qinfo.qname_str)
+                verbose(3, 'invalidated cache: %s' % qstate.qinfo.qname_str)
             except Exception as e:
-                log_err(repr(e))
+                log_err('invalidateQueryInCache(): %s' % repr(e))
             #modify TTL to avoid caching in case V6 goes down
             setTTL(qstate, min_ttl)
             qstate.no_cache_store = 0
             try:
                 storeQueryInCache(qstate, qstate.return_msg.qinfo, qstate.return_msg.rep, 0)
-                #log_info('cached query: %s' % qstate.qinfo.qname_str)
+                verbose(3, 'cached query: %s' % qstate.qinfo.qname_str)
             except Exception as e:
-                log_err(repr(e))
+                log_err('storeQueryInCache(): %s' % repr(e))
             qstate.return_msg.rep.security = 2
             qstate.return_rcode = RCODE_NOERROR
-            qstate.ext_state[id] = MODULE_FINISHED
-            return True
-        else:
-            qstate.ext_state[id] = MODULE_FINISHED
-            return True
+
+        qstate.ext_state[id] = MODULE_FINISHED
+        return True
 
     log_err("pythonmod: bad event")
     qstate.ext_state[id] = MODULE_ERROR
